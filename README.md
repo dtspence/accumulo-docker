@@ -41,6 +41,37 @@ building an image:
 
         docker build --build-arg ACCUMULO_FILE=accumulo-<version>-bin.tar.gz -t accumulo .
 
+## GitHub Actions
+
+The Docker workflow builds the image for `linux/amd64` on pull requests, branch
+pushes, version tags (`v*`), and manual runs. It publishes to
+`ghcr.io/<group>/accumulo` on the default branch and version tags only. Other
+branches and pull requests build without publishing.
+
+The group defaults to the GitHub repository owner (converted to lowercase).
+To override it, set the repository Actions variable `IMAGE_GROUP` to the desired
+GitHub user or organization. The repository's `GITHUB_TOKEN` must have permission
+to publish packages in that namespace; changing the variable does not grant access.
+No additional registry secret is needed for the default namespace.
+
+The workflow uses a version matrix. The `2.1` series builds Accumulo `2.1.6`
+with ZooKeeper `3.9.5` by passing `ACCUMULO_VERSION` and `ZOOKEEPER_VERSION`
+to the Docker build. Add entries to the matrix
+to build additional versions; designate only one entry as `latest`.
+
+Default-branch builds publish `2.1`, `2.1.6`, and `latest` for this entry.
+Every published build also receives a `2.1.6-sha-<full-commit-sha>` tag.
+Git tags produce version-qualified image tags, such as `2.1.6-v1.0.0` for
+Git tag `v1.0.0`, so matrix entries cannot overwrite each other's images.
+Each version also uses its own build cache. Git tags must be valid Docker tags.
+
+```bash
+docker pull ghcr.io/<group>/accumulo:latest
+```
+
+GHCR packages may initially be private. Change the package visibility to public
+in GitHub if anonymous pulls are desired.
+
 ## Image basics
 
 The entrypoint for the Accumulo docker image is the `accumulo` script. While the primary use
