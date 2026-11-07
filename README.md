@@ -41,6 +41,79 @@ building an image:
 
         docker build --build-arg ACCUMULO_FILE=accumulo-<version>-bin.tar.gz -t accumulo .
 
+## Supported architectures and local builds
+
+The Dockerfile supports `linux/amd64` and `linux/arm64` only. BuildKit supplies
+`TARGETARCH`; Hadoop uses the standard binary archive on AMD64 and the
+`-aarch64` archive on ARM64. Accumulo native libraries are compiled for the target
+architecture. Build-only ELF checks reject a Hadoop or Accumulo native library
+with the wrong architecture before it reaches the runtime image.
+
+The `HADOOP_FILE`, `ZOOKEEPER_FILE`, and `ACCUMULO_FILE` build arguments accept
+local tarballs. A supplied Hadoop archive must contain native libraries matching
+the target architecture; Java-only archives and wrong-architecture archives fail.
+Versions without an Apache ARM64 Hadoop archive require a compatible local
+`HADOOP_FILE`. The default Dockerfile versions above remain unchanged; CI uses
+the versions listed below.
+
+```bash
+# Load a single architecture locally (Docker selects the host architecture by default).
+docker buildx build --platform linux/arm64 --load -t accumulo:arm64 .
+# Push both architectures to a registry; cross-platform local builds need emulation.
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --push -t ghcr.io/<group>/accumulo:custom .
+# Test a local final image; requires a host JDK with javac supporting --release 11.
+tests/smoke.sh accumulo:arm64 arm64 2.1.2
+```
+
+CI compiles each architecture on its own native runner. Local cross-platform
+builds can use Buildx/QEMU, but native builders are recommended for compilation.
+The final image contains the JRE and runtime installations, without the build JDK,
+compiler, or ELF inspection tools.
+
+## GitHub Actions
+
+The Docker workflow builds and tests the image for `linux/amd64` and `linux/arm64`
+on native Ubuntu runners on pull requests, branch
+pushes, version tags (`v*`), and manual runs. It publishes to
+`ghcr.io/<group>/accumulo` on the default branch and version tags only. Other
+branches and pull requests build without publishing.
+
+The group defaults to the GitHub repository owner (converted to lowercase).
+To override it, set the repository Actions variable `IMAGE_GROUP` to the desired
+GitHub user or organization. The repository's `GITHUB_TOKEN` must have permission
+to publish packages in that namespace; changing the variable does not grant access.
+No additional registry secret is needed for the default namespace.
+
+The workflow uses a version matrix. The `2.1` series builds Accumulo `2.1.6`
+with ZooKeeper `3.9.5` by passing `ACCUMULO_VERSION` and `ZOOKEEPER_VERSION`
+to the Docker build. Add entries to the matrix
+to build additional versions in the prepare job; designate only one entry as `latest`.
+
+Default-branch builds publish `2.1`, `2.1.6`, and `latest` for this entry.
+Every published build also receives a `2.1.6-sha-<full-commit-sha>` tag.
+Git tags produce version-qualified image tags, such as `2.1.6-v1.0.0` for
+Git tag `v1.0.0`, so matrix entries cannot overwrite each other's images.
+Each architecture and version uses its own build cache. Git tags must be valid Docker tags.
+
+Both native builds must pass before shared tags are published as a multi-platform
+manifest. The exact tested images are pushed using unique staging tags containing
+the version, commit, workflow run, attempt, and architecture; the merge job combines
+their immutable digests. Runs for the same Git ref are serialized without cancelling
+an active publication. Pull requests and nondefault branches do not log in or push.
+
+Smoke tests check the final runtime image architecture, Java and Accumulo versions,
+native shared-library dependencies, Hadoop and zlib native support, and Accumulo
+NativeMap JNI put/get, ordered iteration, size, and deletion. Optional Hadoop codecs
+are reported but are not required. These checks do not start a complete cluster.
+
+```bash
+docker pull ghcr.io/<group>/accumulo:latest
+```
+
+GHCR packages may initially be private. Change the package visibility to public
+in GitHub if anonymous pulls are desired.
+
 ## Image basics
 
 The entrypoint for the Accumulo docker image is the `accumulo` script. While the primary use

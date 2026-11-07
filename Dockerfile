@@ -31,16 +31,17 @@ RUN set -eux; \
 FROM base as buildbase
 
 RUN set -eux; \
-  yum install -y java-11-openjdk-devel make gcc-c++ wget && \
+  yum install -y java-11-openjdk-devel make gcc-c++ wget binutils && \
   update-ca-trust extract
 
-COPY download.sh /usr/local/bin/
+COPY download.sh scripts/verify-elf.sh /usr/local/bin/
 
 ##
 ## Hadoop image. Download/copy and extract the Hadoop installation.
 ##
 FROM buildbase as hadoop
 
+ARG TARGETARCH
 ARG HADOOP_VERSION=3.3.6 \
   HADOOP_FILE=_NOT_SET
 
@@ -52,9 +53,15 @@ ARG HADOOP_VERSION=3.3.6 \
 COPY download.sh ${HADOOP_FILE}* /tmp/
 
 RUN set -eux; \
-  download.sh "${HADOOP_FILE}" "hadoop.tar.gz" "hadoop/core/hadoop-$HADOOP_VERSION/hadoop-$HADOOP_VERSION.tar.gz"; \
+  case "$TARGETARCH" in \
+    amd64) hadoop_suffix= ;; \
+    arm64) hadoop_suffix=-aarch64 ;; \
+    *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+  esac; \
+  download.sh "${HADOOP_FILE}" "hadoop.tar.gz" "hadoop/core/hadoop-$HADOOP_VERSION/hadoop-$HADOOP_VERSION$hadoop_suffix.tar.gz"; \
   tar xzf hadoop.tar.gz -C /tmp/; \
   mv /tmp/hadoop-*/ /opt/hadoop; \
+  verify-elf.sh "$TARGETARCH" /opt/hadoop/lib/native/libhadoop.so; \
   rm -rf /opt/hadoop/share/doc/hadoop
 
 ##
@@ -83,6 +90,7 @@ FROM buildbase as accumulo
 
 ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
 
+ARG TARGETARCH
 ARG ACCUMULO_VERSION=2.1.2 \
   ACCUMULO_FILE=_NOT_SET
 # Copy a known file along with the optional files (that might not exist).
@@ -96,7 +104,8 @@ RUN set -eux; \
   download.sh "${ACCUMULO_FILE}" "accumulo.tar.gz" "accumulo/$ACCUMULO_VERSION/accumulo-$ACCUMULO_VERSION-bin.tar.gz"; \
   tar xzf accumulo.tar.gz -C /tmp/; \
   mv /tmp/accumulo-*/ /opt/accumulo; \
-  /opt/accumulo/bin/accumulo-util build-native
+  /opt/accumulo/bin/accumulo-util build-native; \
+  verify-elf.sh "$TARGETARCH" /opt/accumulo/lib/native/libaccumulo.so
 
 ADD properties/ /opt/accumulo/conf/
 
@@ -107,7 +116,7 @@ ADD properties/ /opt/accumulo/conf/
 FROM base
 
 ARG HADOOP_USER_NAME=accumulo
-ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk \
+ENV JAVA_HOME=/usr/lib/jvm/jre-11-openjdk \
   HADOOP_HOME=/opt/hadoop \
   HADOOP_USER_NAME=$HADOOP_USER_NAME \
   ZOOKEEPER_HOME=/opt/zookeeper \
